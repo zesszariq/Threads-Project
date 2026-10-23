@@ -1,10 +1,12 @@
 # Threads Publisher — Assignment Ninja pilot
 
-This repository will hold the first scheduled Threads publishing workflow, starting with Assignment Ninja.
+This repository is being prepared for a scheduled Threads publishing workflow, starting with Assignment Ninja.
 
 ## Current state
 
-Bootstrap only. No scheduler or live publishing is enabled yet. The initial setup must remain dry-run until the Lark source fields and the Ninja Threads authorization are verified.
+A manual, read-only Lark dry-run workflow has been added on the `codex/ninja-lark-dry-run` branch. It is not yet merged or run. It checks that the Lark app can obtain an app token, read the Ninja view's fields and records, and reports only counts/schema—never post copy or image URLs.
+
+There is no scheduler or live publishing enabled.
 
 ## Intended flow
 
@@ -22,11 +24,28 @@ Bootstrap only. No scheduler or live publishing is enabled yet. The initial setu
 - Keep credentials in GitHub Actions secrets, never in source files, commits, or logs.
 - Provide a kill switch that disables publishing immediately.
 
-## Remaining setup
+## What is needed to run the dry-run
 
-- Lark admin approval for the Ninja calendar, with the minimum read/write scopes needed for the post fields and result fields.
-- The exact Ninja Base/table/view and its real field names; map these from the approved Base, not guessed names.
-- Authorization of the Ninja Threads account for the Threads publishing API.
-- A confirmed posting schedule in Asia/Kuala_Lumpur and one approved post for an end-to-end test.
+After merging the branch, configure these in the repository's Settings → Secrets and variables → Actions:
 
-Until those are confirmed, this repository is documentation only and cannot publish.
+Secrets:
+- `LARK_APP_ID`
+- `LARK_APP_SECRET`
+- `LARK_BASE_TOKEN`
+
+Repository variables:
+- `LARK_TABLE_ID` — Threads Content Planner table ID
+- `LARK_VIEW_ID` — Ninja view ID
+
+Then open Actions → “Ninja Lark dry-run” → Run workflow. It is manual and read-only.
+
+The app has been added to the Base with view-only access, but the workflow has not yet verified that the app credentials can read it. The dry-run will reveal the real field names/types; use those to map approval, copy, media, schedule, and publishing-state fields before implementing any publishing or write-back.
+
+## Remaining rollout gates
+
+- Run and pass the Lark dry-run against the Ninja view.
+- Map and validate the real field names/types.
+- Confirm the Ninja Threads account authorization and required publishing credentials.
+- Decide on write-back: the app currently has view-only Base access, so it cannot update publishing status or store post IDs/links.
+- Test an approved post with an explicit, one-post live-publishing enablement.
+- Turn on a recurring schedule only after the end-to-end test and duplicate protection pass.
