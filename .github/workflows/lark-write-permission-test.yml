@@ -1,0 +1,95 @@
+name: One-time Lark write permission test
+
+on:
+  push:
+    branches:
+      - codex/lark-write-permission-test
+    paths:
+      - .github/workflows/lark-write-permission-test.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-lark-write:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create one unscheduled test row
+        env:
+          LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
+          LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+          LARK_BASE_TOKEN: ${{ secrets.LARK_BASE_TOKEN }}
+          LARK_TABLE_ID: ${{ vars.LARK_TABLE_ID }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          root = "https://open.larksuite.com/open-apis"
+          required = ("LARK_APP_ID", "LARK_APP_SECRET", "LARK_BASE_TOKEN", "LARK_TABLE_ID")
+          missing = [name for name in required if not os.environ.get(name, "").strip()]
+          if missing:
+              print("Missing required GitHub Actions setting(s): " + ", ".join(missing), file=sys.stderr)
+              sys.exit(1)
+
+          def post(url, payload, token=None):
+              headers = {"Accept": "application/json", "Content-Type": "application/json; charset=utf-8"}
+              if token:
+                  headers["Authorization"] = "Bearer " + token
+              request = urllib.request.Request(
+                  url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST"
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      result = json.loads(response.read().decode("utf-8"))
+              except urllib.error.HTTPError as exc:
+                  print(f"Lark API returned HTTP {exc.code}; no credential or URL details emitted.", file=sys.stderr)
+                  sys.exit(1)
+              except (urllib.error.URLError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                  print(f"Lark API request failed ({type(exc).__name__}); no credential details emitted.", file=sys.stderr)
+                  sys.exit(1)
+              if not isinstance(result, dict) or result.get("code", 0) != 0:
+                  code = result.get("code", "unknown") if isinstance(result, dict) else "unknown"
+                  msg = str(result.get("msg", "API request failed"))[:180] if isinstance(result, dict) else "Unexpected response"
+                  print(f"Lark API error {code}: {msg}", file=sys.stderr)
+                  sys.exit(1)
+              return result
+
+          token_result = post(
+              root + "/auth/v3/tenant_access_token/internal",
+              {"app_id": os.environ["LARK_APP_ID"], "app_secret": os.environ["LARK_APP_SECRET"]},
+          )
+          access_token = token_result.get("tenant_access_token")
+          if not access_token:
+              print("Lark did not return an app access token.", file=sys.stderr)
+              sys.exit(1)
+
+          base = urllib.parse.quote(os.environ["LARK_BASE_TOKEN"], safe="")
+          table = urllib.parse.quote(os.environ["LARK_TABLE_ID"], safe="")
+          marker = f"[AUTOMATION TEST — DO NOT PUBLISH] Write-permission check run {os.environ['GITHUB_RUN_ID']}"
+          created = post(
+              f"{root}/bitable/v1/apps/{base}/tables/{table}/records",
+              {"fields": {"Copywriting": marker}},
+              access_token,
+          )
+          record = (created.get("data") or {}).get("record") or {}
+          record_id = record.get("record_id")
+          if not record_id:
+              print("Lark returned success but no record ID; inspect the Base manually before retrying.", file=sys.stderr)
+              sys.exit(1)
+          print("Lark app write-permission test: OK")
+          print(f"Created one unscheduled test row. Record ID: {record_id}")
+          print("The row has no posting date or status and must not be published.")
+          PY
