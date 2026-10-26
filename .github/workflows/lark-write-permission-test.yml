@@ -55,7 +55,13 @@ jobs:
                   with urllib.request.urlopen(request, timeout=30) as response:
                       result = json.loads(response.read().decode("utf-8"))
               except urllib.error.HTTPError as exc:
-                  print(f"Lark API returned HTTP {exc.code}; no credential or URL details emitted.", file=sys.stderr)
+                  try:
+                      error_body = json.loads(exc.read().decode("utf-8"))
+                      code = error_body.get("code", "unknown")
+                      message = str(error_body.get("msg", "API request failed"))[:180]
+                      print(f"Lark API HTTP {exc.code}, error {code}: {message}", file=sys.stderr)
+                  except (UnicodeDecodeError, json.JSONDecodeError):
+                      print(f"Lark API returned HTTP {exc.code}; response was not readable JSON.", file=sys.stderr)
                   sys.exit(1)
               except (urllib.error.URLError, UnicodeDecodeError, json.JSONDecodeError) as exc:
                   print(f"Lark API request failed ({type(exc).__name__}); no credential details emitted.", file=sys.stderr)
