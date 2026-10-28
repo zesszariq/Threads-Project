@@ -293,6 +293,9 @@ def main() -> int:
         table_id = required("LARK_TABLE_ID")
         view_id = required("LARK_VIEW_ID")
         threads_token = required("THREADS_ACCESS_TOKEN")
+        expected_username = required("THREADS_EXPECTED_USERNAME").strip().lstrip("@").casefold()
+        if publish and os.environ.get("GITHUB_REF_NAME") != "main":
+            raise CheckError("Live publishing is allowed only from the main branch.")
         cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "").strip()
         cloud_api_key = os.environ.get("CLOUDINARY_API_KEY", "").strip()
         cloud_api_secret = os.environ.get("CLOUDINARY_API_SECRET", "").strip()
@@ -315,6 +318,9 @@ def main() -> int:
         )
         if not account.get("id"):
             raise CheckError("Threads did not confirm the connected account.")
+        actual_username = str(account.get("username") or "").strip().lstrip("@").casefold()
+        if not actual_username or actual_username != expected_username:
+            raise CheckError("The connected Threads account does not match THREADS_EXPECTED_USERNAME.")
 
         if not publish:
             print(
