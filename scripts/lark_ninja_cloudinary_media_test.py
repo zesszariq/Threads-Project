@@ -36,8 +36,16 @@ def required(name: str) -> str:
     return value
 
 
+def safe_api_message(value: object) -> str:
+    message = str(value or "no diagnostic message")
+    message = re.sub(r"https?://\S+", "[URL]", message)
+    message = re.sub(r"(?i)(token|secret|authorization)\s*[:=]\s*[^,; ]+", r"\1=[redacted]", message)
+    message = re.sub(r"\b[A-Za-z0-9_-]{48,}\b", "[redacted]", message)
+    return message[:180]
+
+
 def request_json(method: str, url: str, *, token: str | None = None,
-                 payload: dict | None = None) -> dict:
+                 payload: dict | None = None, operation: str = "Lark request") -> dict:
     headers = {"Accept": "application/json"}
     body = None
     if token:
@@ -50,17 +58,33 @@ def request_json(method: str, url: str, *, token: str | None = None,
         with urllib.request.urlopen(request, timeout=30) as response:
             result = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        raise CheckError(f"Lark API returned HTTP {exc.code}. Check media-download scope and Base access.") from None
+        try:
+            error = json.loads(exc.read().decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            error = {}
+        if not isinstance(error, dict):
+            error = {}
+        api_code = error.get("code", "unknown")
+        message = safe_api_message(error.get("msg", "no diagnostic message"))
+        error_data = error.get("error") if isinstance(error.get("error"), dict) else {}
+        request_id = error_data.get("log_id") or error.get("log_id")
+        suffix = f"; request ID {request_id}" if isinstance(request_id, str) and request_id else ""
+        raise CheckError(
+            f"{operation} failed (HTTP {exc.code}, Lark code {api_code}{suffix}): {message}"
+        ) from None
     except urllib.error.URLError:
-        raise CheckError("Could not reach the Lark API.") from None
+        raise CheckError(f"{operation} could not reach Lark.") from None
     except (UnicodeDecodeError, json.JSONDecodeError):
-        raise CheckError("Lark returned an unexpected JSON response.") from None
+        raise CheckError(f"{operation}: Lark returned an unexpected JSON response.") from None
     if not isinstance(result, dict):
-        raise CheckError("Lark returned an unexpected response format.")
+        raise CheckError(f"{operation}: Lark returned an unexpected response format.")
     if result.get("code", 0) != 0:
         code = result.get("code", "unknown")
-        message = str(result.get("msg", "request failed"))[:180]
-        raise CheckError(f"Lark API error {code}: {message}")
+        message = safe_api_message(result.get("msg", "request failed"))
+        error_data = result.get("error") if isinstance(result.get("error"), dict) else {}
+        request_id = error_data.get("log_id") or result.get("log_id")
+        suffix = f"; request ID {request_id}" if isinstance(request_id, str) and request_id else ""
+        raise CheckError(f"{operation} failed (Lark code {code}{suffix}): {message}")
     return result
 
 
@@ -69,6 +93,7 @@ def tenant_token(app_id: str, app_secret: str) -> str:
         "POST",
         f"{API_ROOT}/auth/v3/tenant_access_token/internal",
         payload={"app_id": app_id, "app_secret": app_secret},
+        operation="create app access token",
     )
     token = (result.get("data") or {}).get("tenant_access_token") or result.get("tenant_access_token")
     if not isinstance(token, str) or not token:
@@ -91,7 +116,7 @@ def get_items(path: str, *, token: str, base_token: str, table_id: str,
             f"/tables/{urllib.parse.quote(table_id, safe='')}/{path}?"
             f"{urllib.parse.urlencode(params)}"
         )
-        result = request_json("GET", url, token=token)
+        result = request_json("GET", url, token=token, operation="read Base records")
         data = result.get("data") or {}
         batch = data.get("items") or []
         if not isinstance(batch, list):
@@ -187,7 +212,8 @@ def download_attachment(*, token: str, base_token: str, table_id: str,
         f"/tables/{urllib.parse.quote(table_id, safe='')}/get_attachments"
     )
     metadata = request_json("POST", metadata_url, token=token,
-                            payload={"record_id_list": [record_id]})
+                            payload={"record_id_list": [record_id]},
+                            operation="read Base attachment metadata")
     attachment_root = (metadata.get("data") or {}).get("attachments") or {}
     record_data = attachment_root.get(record_id) or {}
     selected: dict | None = None
