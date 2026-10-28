@@ -4,7 +4,7 @@ This repository contains a manual media smoke test and a guarded weekday Threads
 
 ## Weekday publishing
 
-The Ninja Threads weekday publisher workflow is scheduled for **10:00 AM Malaysia time, Monday to Friday** (02:00 UTC). It looks for one Ninja record with Status set to Scheduled, Posting Date due today, and non-empty Copywriting. A scheduled run publishes no more than one post. It stops without posting if no item is due or if multiple items are due.
+The Ninja Threads weekday publisher runs at **10:00 AM and 11:00 AM Malaysia time, Monday to Friday** (02:00 and 03:00 UTC). The 11:00 run is a one-time fallback: if the 10:00 run already posted, it sees no due Scheduled record and exits without action. It looks for one Ninja record with Status set to Scheduled, Posting Date due today, and non-empty Copywriting. A run publishes no more than one post and stops if multiple items are due.
 
 Image posts are downloaded from Lark, compressed if needed, uploaded to Cloudinary, and sent to Threads using the resulting public HTTPS URL. After Threads confirms publication, the same Lark record is changed to Posted.
 
@@ -15,7 +15,7 @@ Open **Actions → Ninja Threads weekday publisher → Run workflow**.
 - **dry-run** checks Lark access, verifies the Threads token and expected account, and validates one upcoming record. It does not publish or edit Lark.
 - **publish** sends one due post immediately. This is a live action and is intended for the one-post test.
 
-The scheduled workflow uses live publishing automatically at 02:00 UTC on weekdays.
+The scheduled workflow uses live publishing automatically at 02:00 UTC, with one fallback attempt at 03:00 UTC, on weekdays.
 
 ## Required GitHub configuration
 
