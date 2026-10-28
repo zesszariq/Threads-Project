@@ -305,7 +305,13 @@ def main() -> int:
             "records", token=lark_token, base_token=base_token,
             table_id=table_id, view_id=view_id,
         )
-        record, graphic, text = choose_record(records, publish=publish, now=now)
+        try:
+            record, graphic, text = choose_record(records, publish=publish, now=now)
+        except CheckError as exc:
+            if str(exc) == "No due Scheduled Ninja post with copywriting was found.":
+                print("No due Scheduled Ninja post; nothing to publish.")
+                return 0
+            raise
         record_id = record.get("record_id")
         if not isinstance(record_id, str):
             raise CheckError("Selected Ninja record has no record ID.")
