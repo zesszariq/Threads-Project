@@ -266,11 +266,10 @@ def compress_image_for_cloudinary(content: bytes, mime_type: str) -> tuple[bytes
         from PIL import Image, ImageOps
         source = Image.open(io.BytesIO(content))
         source.load()
+        image_format = (source.format or "").upper()
         source = ImageOps.exif_transpose(source)
     except Exception:
         raise CheckError("The oversized Lark image could not be decoded for compression.") from None
-
-    image_format = (source.format or "").upper()
     if image_format not in {"JPEG", "PNG", "WEBP"}:
         raise CheckError(f"Cannot safely compress oversized {mime_type} media for this image test.")
 
