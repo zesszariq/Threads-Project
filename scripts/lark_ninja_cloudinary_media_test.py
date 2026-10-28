@@ -8,6 +8,7 @@ configured Ninja view that has an image attachment.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import re
@@ -22,6 +23,7 @@ from zoneinfo import ZoneInfo
 API_ROOT = "https://open.larksuite.com/open-apis"
 MAX_PAGES = 20
 MAX_MEDIA_BYTES = 25 * 1024 * 1024
+CLOUDINARY_MAX_BYTES = 9_500_000
 LOCAL_ZONE = ZoneInfo("Asia/Kuala_Lumpur")
 
 
@@ -252,12 +254,88 @@ def download_attachment(*, token: str, base_token: str, table_id: str,
     return content, content_type
 
 
+
+def compress_image_for_cloudinary(content: bytes, mime_type: str) -> tuple[bytes, str, str, bool]:
+    if len(content) <= CLOUDINARY_MAX_BYTES:
+        extension = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}.get(mime_type)
+        if not extension:
+            raise CheckError(f"Cloudinary test does not support oversized {mime_type} images.")
+        return content, mime_type, extension, False
+
+    try:
+        from PIL import Image, ImageOps
+        source = Image.open(io.BytesIO(content))
+        source.load()
+        image_format = (source.format or "").upper()
+        source = ImageOps.exif_transpose(source)
+    except Exception:
+        raise CheckError("The oversized Lark image could not be decoded for compression.") from None
+    if image_format not in {"JPEG", "PNG", "WEBP"}:
+        raise CheckError(f"Cannot safely compress oversized {mime_type} media for this image test.")
+
+    def resized_copy(max_edge: int):
+        result = source.copy()
+        if max(result.size) > max_edge:
+            ratio = max_edge / max(result.size)
+            size = (max(1, round(result.width * ratio)), max(1, round(result.height * ratio)))
+            result = result.resize(size, Image.Resampling.LANCZOS)
+        return result
+
+    if image_format == "PNG":
+        for max_edge in (max(source.size), 3200, 2800, 2400, 2000):
+            candidate = resized_copy(max_edge)
+            output = io.BytesIO()
+            candidate.save(output, format="PNG", optimize=True)
+            data = output.getvalue()
+            if len(data) <= CLOUDINARY_MAX_BYTES:
+                return data, "image/png", ".png", True
+        # Palette reduction preserves transparency and usually shrinks large flat-color graphics.
+        candidate = resized_copy(2000)
+        if candidate.mode not in {"1", "L", "P"}:
+            candidate = candidate.convert("RGBA" if "A" in candidate.getbands() else "RGB")
+        try:
+            palette = candidate.quantize(colors=256, method=Image.Quantize.FASTOCTREE)
+            output = io.BytesIO()
+            palette.save(output, format="PNG", optimize=True)
+            data = output.getvalue()
+            if len(data) <= CLOUDINARY_MAX_BYTES:
+                return data, "image/png", ".png", True
+        except Exception:
+            pass
+        raise CheckError("Image compression could not bring this PNG below Cloudinary's 10 MB limit.")
+
+    output_mime = "image/webp" if image_format == "WEBP" else "image/jpeg"
+    output_ext = ".webp" if image_format == "WEBP" else ".jpg"
+    for max_edge in (max(source.size), 3200, 2800, 2400, 2000, 1600):
+        candidate = resized_copy(max_edge)
+        if output_mime == "image/jpeg":
+            if candidate.mode != "RGB":
+                if "A" in candidate.getbands():
+                    background = Image.new("RGB", candidate.size, "white")
+                    alpha = candidate.getchannel("A")
+                    background.paste(candidate.convert("RGB"), mask=alpha)
+                    candidate = background
+                else:
+                    candidate = candidate.convert("RGB")
+        for quality in (90, 85, 80, 75, 70, 65):
+            output = io.BytesIO()
+            if output_mime == "image/jpeg":
+                candidate.save(output, format="JPEG", quality=quality, optimize=True, progressive=True)
+            else:
+                candidate.save(output, format="WEBP", quality=quality, method=6)
+            data = output.getvalue()
+            if len(data) <= CLOUDINARY_MAX_BYTES:
+                return data, output_mime, output_ext, True
+    raise CheckError("Image compression could not bring this image below Cloudinary's 10 MB limit.")
+
 def cloudinary_signature(params: dict[str, str], api_secret: str) -> str:
     canonical = "&".join(f"{key}={params[key]}" for key in sorted(params))
     return hashlib.sha1(f"{canonical}{api_secret}".encode("utf-8")).hexdigest()
 
 
 def cloudinary_post(url: str, fields: dict[str, str], image: bytes | None = None,
+                   image_mime_type: str = "application/octet-stream",
+                   image_filename: str = "ninja-graphic-test",
                    operation: str = "Cloudinary request") -> dict:
     boundary = "----NinjaCloudinaryMediaTestBoundary"
     parts: list[bytes] = []
@@ -271,8 +349,8 @@ def cloudinary_post(url: str, fields: dict[str, str], image: bytes | None = None
     if image is not None:
         parts.extend([
             f"--{boundary}\r\n".encode(),
-            b'Content-Disposition: form-data; name="file"; filename="ninja-graphic-test"\r\n',
-            b"Content-Type: application/octet-stream\r\n\r\n",
+            f'Content-Disposition: form-data; name="file"; filename="{image_filename}"\r\n'.encode(),
+            f"Content-Type: {image_mime_type}\r\n\r\n".encode(),
             image,
             b"\r\n",
         ])
@@ -335,7 +413,9 @@ def main() -> int:
             token=lark_token, base_token=base_token, table_id=table_id,
             record_id=record_id, file_token=file_token,
         )
-        extension = ".jpg" if mime_type in {"image/jpeg", "image/jpg"} else ".png"
+        media, upload_mime_type, extension, compressed = compress_image_for_cloudinary(media, mime_type)
+        if compressed:
+            print(f"Compressed the selected image to {len(media)} bytes before uploading to Cloudinary.")
         run_id = os.environ.get("GITHUB_RUN_ID", str(int(time.time())))
         attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
         public_id = f"ninja-media-smoke-{run_id}-{attempt}"
@@ -351,6 +431,8 @@ def main() -> int:
             f"https://api.cloudinary.com/v1_1/{cloud_name}/{resource_type}/upload",
             upload_fields,
             media,
+            image_mime_type=upload_mime_type,
+            image_filename=f"ninja-graphic-test{extension}",
             operation="Cloudinary image upload",
         )
         uploaded_public_id = uploaded.get("public_id")
