@@ -1,0 +1,27 @@
+name: Cloudinary upload smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudinary-upload-smoke-test
+  cancel-in-progress: false
+
+jobs:
+  test-upload:
+    name: Upload and remove a synthetic image
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Test Cloudinary upload and public delivery
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ vars.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ vars.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+        run: python scripts/cloudinary_upload_smoke_test.py
