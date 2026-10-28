@@ -38,9 +38,9 @@ def required(name: str) -> str:
 
 def safe_api_message(value: object) -> str:
     message = str(value or "no diagnostic message")
-    message = re.sub(r"https?://\\S+", "[URL]", message)
-    message = re.sub(r"(?i)(token|secret|authorization)\\s*[:=]\\s*[^,; ]+", r"\\1=[redacted]", message)
-    message = re.sub(r"\\b[A-Za-z0-9_-]{48,}\\b", "[redacted]", message)
+    message = re.sub(r"https?://\S+", "[URL]", message)
+    message = re.sub(r"(?i)(token|secret|authorization)\s*[:=]\s*[^,; ]+", r"\1=[redacted]", message)
+    message = re.sub(r"\b[A-Za-z0-9_-]{48,}\b", "[redacted]", message)
     return message[:180]
 
 
