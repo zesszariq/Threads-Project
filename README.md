@@ -1,51 +1,46 @@
 # Threads Publisher — Assignment Ninja pilot
 
-This repository is being prepared for a scheduled Threads publishing workflow, starting with Assignment Ninja.
+This repository contains a manual media smoke test and a guarded weekday Threads publisher for the Assignment Ninja pilot.
 
-## Current state
+## Weekday publishing
 
-A manual, read-only Lark dry-run workflow has been added on the `codex/ninja-lark-dry-run` branch. It is not yet merged or run. It checks that the Lark app can obtain an app token, read the Ninja view's fields and records, and reports only counts/schema—never post copy or image URLs.
+The Ninja Threads weekday publisher workflow is scheduled for **5:00 PM Malaysia time, Monday to Friday** (09:00 UTC). It looks for one Ninja record with Status set to Scheduled, Posting Date due today, and non-empty Copywriting. A scheduled run publishes no more than one post. It stops without posting if no item is due or if multiple items are due.
 
-There is no scheduler or live publishing enabled.
+Image posts are downloaded from Lark, compressed if needed, uploaded to Cloudinary, and sent to Threads using the resulting public HTTPS URL. After Threads confirms publication, the same Lark record is changed to Posted.
 
-## Intended flow
+## Manual runs
 
-1. Read only Ninja calendar records marked approved and due to publish.
-2. Validate the copy, media, account allowlist, and scheduled time.
-3. Publish through Meta's official Threads API only after production is deliberately enabled.
-4. Write the result (published status, post ID/link, or a safe error state) back to the matching Lark record.
+Open **Actions → Ninja Threads weekday publisher → Run workflow**.
 
-## Guardrails
+- **dry-run** checks Lark access, verifies the Threads token and expected account, and validates one upcoming record. It does not publish or edit Lark.
+- **publish** sends one due post immediately. This is a live action and is intended for the one-post test.
 
-- Default to dry-run; publishing remains disabled until an explicit production configuration is added.
-- Never publish a draft or a record for another brand/account.
-- Limit each run to one post and prevent duplicate publication by tracking the Lark record ID and publication state.
-- If a request may have succeeded but the result is uncertain, stop for review rather than retrying and risking a duplicate.
-- Keep credentials in GitHub Actions secrets, never in source files, commits, or logs.
-- Provide a kill switch that disables publishing immediately.
+The scheduled workflow uses live publishing automatically at 09:00 UTC on weekdays.
 
-## What is needed to run the dry-run
+## Required GitHub configuration
 
-After merging the branch, configure these in the repository's Settings → Secrets and variables → Actions:
+Repository secrets:
 
-Secrets:
-- `LARK_APP_ID`
-- `LARK_APP_SECRET`
-- `LARK_BASE_TOKEN`
+- LARK_APP_ID
+- LARK_APP_SECRET
+- LARK_BASE_TOKEN
+- THREADS_ACCESS_TOKEN (or existing secret name THREADS_TOKEN)
+- CLOUDINARY_API_SECRET
 
 Repository variables:
-- `LARK_TABLE_ID` — Threads Content Planner table ID
-- `LARK_VIEW_ID` — Ninja view ID
 
-Then open Actions → “Ninja Lark dry-run” → Run workflow. It is manual and read-only.
+- LARK_TABLE_ID
+- LARK_VIEW_ID
+- THREADS_EXPECTED_USERNAME (Threads handle without @, matching the authorized token)
+- CLOUDINARY_CLOUD_NAME
+- CLOUDINARY_API_KEY
 
-The app has been added to the Base with view-only access, but the workflow has not yet verified that the app credentials can read it. The dry-run will reveal the real field names/types; use those to map approval, copy, media, schedule, and publishing-state fields before implementing any publishing or write-back.
+The Lark app requires base:record:read, base:record:update, and docs:document.media:download. Permission changes must be included in an approved, released app version, and the app must have edit access to the Base. The Threads token requires threads_basic and threads_content_publish.
 
-## Remaining rollout gates
+The workflow requires GitHub Actions permission to write repository contents. Before calling Threads' publish endpoint, it commits a durable reservation for the selected Lark record to state/ninja-published.json. If a publish outcome is uncertain or a later write fails, future runs skip that record rather than risking a duplicate. Such a record requires manual review.
 
-- Run and pass the Lark dry-run against the Ninja view.
-- Map and validate the real field names/types.
-- Confirm the Ninja Threads account authorization and required publishing credentials.
-- Decide on write-back: the app currently has view-only Base access, so it cannot update publishing status or store post IDs/links.
-- Test an approved post with an explicit, one-post live-publishing enablement.
-- Turn on a recurring schedule only after the end-to-end test and duplicate protection pass.
+Cloudinary copies used by published posts remain stored so image URLs stay available.
+
+## Media smoke test
+
+The Ninja Cloudinary media URL test is manual-only. It reads one scheduled graphic, compresses it if required, verifies its public Cloudinary URL, then deletes that temporary Cloudinary copy. It never publishes or writes to Lark.

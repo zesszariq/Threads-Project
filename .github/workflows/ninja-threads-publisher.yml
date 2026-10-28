@@ -1,0 +1,53 @@
+name: Ninja Threads weekday publisher
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Dry-run checks access; publish sends one due post"
+        type: choice
+        options:
+          - dry-run
+          - publish
+        default: dry-run
+        required: true
+  schedule:
+    - cron: "0 9 * * 1-5"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ninja-threads-weekday-publisher
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Check or publish one due Ninja post
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Install image compression support
+        run: python -m pip install --disable-pip-version-check Pillow
+
+      - name: Run one-post workflow
+        env:
+          LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
+          LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+          LARK_BASE_TOKEN: ${{ secrets.LARK_BASE_TOKEN }}
+          LARK_TABLE_ID: ${{ vars.LARK_TABLE_ID }}
+          LARK_VIEW_ID: ${{ vars.LARK_VIEW_ID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN || secrets.THREADS_TOKEN }}
+          THREADS_EXPECTED_USERNAME: ${{ vars.THREADS_EXPECTED_USERNAME }}
+          CLOUDINARY_CLOUD_NAME: ${{ vars.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ vars.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          PUBLISH_MODE: ${{ github.event_name == 'schedule' && 'publish' || inputs.mode || 'dry-run' }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: python scripts/lark_ninja_publish.py
