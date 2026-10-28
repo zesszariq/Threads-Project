@@ -257,7 +257,8 @@ def cloudinary_signature(params: dict[str, str], api_secret: str) -> str:
     return hashlib.sha1(f"{canonical}{api_secret}".encode("utf-8")).hexdigest()
 
 
-def cloudinary_post(url: str, fields: dict[str, str], image: bytes | None = None) -> dict:
+def cloudinary_post(url: str, fields: dict[str, str], image: bytes | None = None,
+                   operation: str = "Cloudinary request") -> dict:
     boundary = "----NinjaCloudinaryMediaTestBoundary"
     parts: list[bytes] = []
     for name, value in fields.items():
@@ -286,9 +287,17 @@ def cloudinary_post(url: str, fields: dict[str, str], image: bytes | None = None
         with urllib.request.urlopen(request, timeout=60) as response:
             result = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        raise CheckError(f"Cloudinary returned HTTP {exc.code}.") from None
+        try:
+            error_body = json.loads(exc.read().decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            error_body = {}
+        error_data = error_body.get("error") if isinstance(error_body, dict) else {}
+        if not isinstance(error_data, dict):
+            error_data = {}
+        message = safe_api_message(error_data.get("message", "no diagnostic message"))
+        raise CheckError(f"{operation} failed (HTTP {exc.code}): {message}") from None
     except urllib.error.URLError:
-        raise CheckError("Could not reach Cloudinary.") from None
+        raise CheckError(f"{operation} could not reach Cloudinary.") from None
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise CheckError("Cloudinary returned an unexpected response.") from None
     if not isinstance(result, dict):
@@ -342,6 +351,7 @@ def main() -> int:
             f"https://api.cloudinary.com/v1_1/{cloud_name}/{resource_type}/upload",
             upload_fields,
             media,
+            operation="Cloudinary image upload",
         )
         uploaded_public_id = uploaded.get("public_id")
         secure_url = uploaded.get("secure_url")
@@ -380,6 +390,7 @@ def main() -> int:
             deleted = cloudinary_post(
                 f"https://api.cloudinary.com/v1_1/{cloud_name}/{resource_type}/destroy",
                 destroy_fields,
+                operation="temporary Cloudinary image cleanup",
             )
             if deleted.get("result") not in {"ok", "not found"}:
                 cleanup_error = "Cloudinary did not confirm deletion of the temporary public test image."
