@@ -262,7 +262,14 @@ def publish_one(*, record: dict, text: str, graphic: dict | None, threads_token:
     if not isinstance(container_id, str) or not container_id:
         raise CheckError("Threads returned no media container ID; the record is reserved for review.")
     if image_url:
-        wait_for_container(container_id, threads_token)
+        try:
+            wait_for_container(container_id, threads_token)
+        except CheckError:
+            # Status polling happens before threads_publish; this container was not posted.
+            state = read_state()
+            state.pop(record_id, None)
+            save_state(state, f"Release pre-publish Ninja record {record_id}")
+            raise
 
     publish_url = (
         f"{THREADS_ROOT}/me/threads_publish"
