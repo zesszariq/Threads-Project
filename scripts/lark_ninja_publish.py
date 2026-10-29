@@ -195,7 +195,7 @@ def wait_for_container(container_id: str, token: str) -> None:
     while time.monotonic() < deadline:
         result = threads_json(
             "GET",
-            f"{THREADS_ROOT}/{urllib.parse.quote(container_id, safe='')}?fields=status,status_code",
+            f"{THREADS_ROOT}/{urllib.parse.quote(container_id, safe='')}?fields=status",
             token=token,
             operation="check Threads media container",
         )
