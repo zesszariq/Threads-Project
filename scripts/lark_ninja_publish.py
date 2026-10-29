@@ -58,10 +58,18 @@ def threads_json(method: str, url: str, *, token: str, params: dict[str, str] | 
         if not isinstance(error, dict):
             error = {}
         code = error.get("code", "unknown")
+        subcode = error.get("error_subcode")
+        transient = error.get("is_transient")
         trace = error.get("fbtrace_id")
-        trace_text = f"; trace ID {trace}" if isinstance(trace, str) and trace else ""
-        # Avoid echoing an API message that might contain submitted post text.
-        raise CheckError(f"{operation} failed (HTTP {exc.code}, Threads code {code}{trace_text}).") from None
+        details = [f"HTTP {exc.code}", f"Threads code {code}"]
+        if subcode is not None:
+            details.append(f"subcode {subcode}")
+        if isinstance(transient, bool):
+            details.append(f"transient {str(transient).lower()}")
+        if isinstance(trace, str) and trace:
+            details.append(f"trace ID {trace}")
+        # Keep the diagnostic metadata but never echo a message that might include post text.
+        raise CheckError(f"{operation} failed ({'; '.join(details)}).") from None
     except urllib.error.URLError:
         raise CheckError(f"{operation} could not reach Threads.") from None
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -256,10 +264,23 @@ def publish_one(*, record: dict, text: str, graphic: dict | None, threads_token:
     if image_url:
         wait_for_container(container_id, threads_token)
 
-    published = threads_json(
-        "POST", f"{THREADS_ROOT}/me/threads_publish", token=threads_token,
-        params={"creation_id": container_id}, operation="publish Threads post",
+    publish_url = (
+        f"{THREADS_ROOT}/me/threads_publish"
+        f"?creation_id={urllib.parse.quote(container_id, safe='')}"
     )
+    try:
+        published = threads_json(
+            "POST", publish_url, token=threads_token,
+            operation="publish Threads post",
+        )
+    except CheckError as exc:
+        # A definite 400/code 24 rejection means Meta did not publish this container.
+        # Release the reservation so the next scheduled slot can create a fresh container.
+        if "publish Threads post failed (HTTP 400, Threads code 24" in str(exc):
+            state = read_state()
+            state.pop(record_id, None)
+            save_state(state, f"Release rejected Ninja Threads record {record_id}")
+        raise
     post_id = published.get("id")
     if not isinstance(post_id, str) or not post_id:
         raise CheckError("Threads returned no post ID; the record is reserved for review.")
