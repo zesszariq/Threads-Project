@@ -135,7 +135,9 @@ def choose_record(records: list[dict], *, publish: bool, now: datetime) -> tuple
         if scheduled_at is None:
             continue
         if publish:
-            if scheduled_at.date() != now.date() or scheduled_at > now:
+            # Posting Date is a date-only Lark field. Its API timestamp can resolve
+            # later in the day, but the row is due on that calendar date.
+            if scheduled_at.date() != now.date():
                 continue
         elif scheduled_at.date() < now.date():
             continue
