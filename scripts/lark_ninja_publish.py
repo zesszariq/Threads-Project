@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -86,8 +86,45 @@ def threads_json(method: str, url: str, *, token: str, params: dict[str, str] | 
     return result
 
 
-def choose_record(records: list[dict], *, publish: bool, now: datetime) -> tuple[dict, dict | None, str]:
-    candidates: list[tuple[datetime, dict, dict | None, str]] = []
+def no_due_diagnostics(records: list[dict], *, now: datetime) -> str:
+    buckets: dict[str, dict[str, int]] = {}
+    for offset in (-1, 0, 1):
+        day = (now.date() + timedelta(days=offset)).isoformat()
+        buckets[day] = {"rows": 0, "scheduled": 0, "with_copy": 0, "future_time": 0}
+    unparseable = 0
+    for record in records:
+        fields = record.get("fields") or {}
+        if not isinstance(fields, dict):
+            continue
+        scheduled_at = posting_datetime(fields.get("Posting Date"))
+        if scheduled_at is None:
+            unparseable += 1
+            continue
+        day = scheduled_at.date().isoformat()
+        if day not in buckets:
+            continue
+        bucket = buckets[day]
+        bucket["rows"] += 1
+        status = display_text(fields.get("Status")).strip().casefold()
+        if status == "scheduled":
+            bucket["scheduled"] += 1
+        if display_text(fields.get("Copywriting")).strip():
+            bucket["with_copy"] += 1
+        if scheduled_at > now:
+            bucket["future_time"] += 1
+    summary = "; ".join(
+        f"{day}: rows={values['rows']}, Scheduled={values['scheduled']}, "
+        f"with_copy={values['with_copy']}, future_time={values['future_time']}"
+        for day, values in buckets.items()
+    )
+    return (
+        f"Checked {len(records)} Lark rows; parsed dates near today: {summary}; "
+        f"unparseable dates={unparseable}."
+    )
+
+
+def choose_record(records: list[dict], *, publish: bool, now: datetime) -> tuple[dict, dict | None, str, str]:
+    candidates: list[tuple[datetime, dict, dict | None, str, str]] = []
     for record in records:
         fields = record.get("fields") or {}
         if not isinstance(fields, dict):
@@ -105,15 +142,17 @@ def choose_record(records: list[dict], *, publish: bool, now: datetime) -> tuple
         text = display_text(fields.get("Copywriting")).strip()
         if not text:
             continue
+        first_comment = display_text(fields.get("First/Second Comment")).strip()
         graphic = first_image_attachment(fields.get("Graphic"))
-        candidates.append((scheduled_at, record, graphic, text))
+        candidates.append((scheduled_at, record, graphic, text, first_comment))
     if not candidates:
-        raise CheckError("No due Scheduled Ninja post with copywriting was found.")
+        detail = no_due_diagnostics(records, now=now)
+        raise CheckError(f"No due Scheduled Ninja post with copywriting was found. {detail}")
     candidates.sort(key=lambda item: item[0])
     if publish and len(candidates) > 1:
         raise CheckError("More than one Ninja post is due today; refusing to choose one automatically.")
-    _, record, graphic, text = candidates[0]
-    return record, graphic, text
+    _, record, graphic, text, first_comment = candidates[0]
+    return record, graphic, text, first_comment
 
 
 def read_state() -> dict:
@@ -216,9 +255,9 @@ def wait_for_container(container_id: str, token: str) -> None:
     raise CheckError("Threads image processing timed out; no publish retry was attempted.")
 
 
-def publish_one(*, record: dict, text: str, graphic: dict | None, threads_token: str,
-                lark_token: str, base_token: str, table_id: str, cloud_name: str,
-                cloud_api_key: str, cloud_api_secret: str, now: datetime) -> str:
+def publish_one(*, record: dict, text: str, first_comment: str, graphic: dict | None,
+                threads_token: str, lark_token: str, base_token: str, table_id: str,
+                cloud_name: str, cloud_api_key: str, cloud_api_secret: str, now: datetime) -> str:
     record_id = record.get("record_id")
     if not isinstance(record_id, str) or not record_id:
         raise CheckError("Selected Ninja record has no record ID.")
@@ -292,16 +331,62 @@ def publish_one(*, record: dict, text: str, graphic: dict | None, threads_token:
     if not isinstance(post_id, str) or not post_id:
         raise CheckError("Threads returned no post ID; the record is reserved for review.")
 
-    # If the Lark write or final state save fails, the reservation blocks automatic retries.
+    # Persist the root ID first so a partial reply failure can never duplicate the post.
+    state[record_id] = {
+        "state": "root_published",
+        "reserved_at": now.isoformat(),
+        "published_at": datetime.now(ZoneInfo(LOCAL_TZ_NAME)).isoformat(),
+        "threads_post_id": post_id,
+    }
+    save_state(state, f"Record Ninja Threads root post {post_id}")
+
+    first_comment_id = None
+    if first_comment:
+        # Store the reply container before publishing. A later retry will stop safely
+        # instead of risking a duplicate reply if the publish response was ambiguous.
+        comment_container = threads_json(
+            "POST",
+            f"{THREADS_ROOT}/me/threads",
+            token=threads_token,
+            params={
+                "media_type": "TEXT",
+                "text": first_comment,
+                "reply_to_id": post_id,
+            },
+            operation="create first-comment reply",
+        )
+        comment_container_id = comment_container.get("id")
+        if not isinstance(comment_container_id, str) or not comment_container_id:
+            raise CheckError("Threads returned no first-comment container ID; review before retrying.")
+        state[record_id]["state"] = "first_comment_pending"
+        state[record_id]["first_comment_container_id"] = comment_container_id
+        save_state(state, f"Reserve Ninja Threads first comment for {post_id}")
+        published_comment = threads_json(
+            "POST",
+            f"{THREADS_ROOT}/me/threads_publish"
+            f"?creation_id={urllib.parse.quote(comment_container_id, safe='')}",
+            token=threads_token,
+            operation="publish first-comment reply",
+        )
+        first_comment_id = published_comment.get("id")
+        if not isinstance(first_comment_id, str) or not first_comment_id:
+            raise CheckError("Threads returned no first-comment ID; review before retrying.")
+        state[record_id]["first_comment_id"] = first_comment_id
+        state[record_id]["state"] = "first_comment_published"
+        save_state(state, f"Record Ninja Threads first comment for {post_id}")
+
+    # Mark Posted only after the root and its first comment are complete.
     lark_update_status(
         app_token=base_token, table_id=table_id, record_id=record_id,
         status="Posted", token=lark_token,
     )
     state[record_id] = {
+        **state[record_id],
         "state": "published",
         "reserved_at": now.isoformat(),
         "published_at": datetime.now(ZoneInfo(LOCAL_TZ_NAME)).isoformat(),
         "threads_post_id": post_id,
+        **({"first_comment_id": first_comment_id} if first_comment_id else {}),
     }
     save_state(state, f"Record Ninja Threads post {post_id}")
     return post_id
@@ -334,10 +419,10 @@ def main() -> int:
             table_id=table_id, view_id=view_id,
         )
         try:
-            record, graphic, text = choose_record(records, publish=publish, now=now)
+            record, graphic, text, first_comment = choose_record(records, publish=publish, now=now)
         except CheckError as exc:
-            if str(exc) == "No due Scheduled Ninja post with copywriting was found.":
-                print("No due Scheduled Ninja post; nothing to publish.")
+            if str(exc).startswith("No due Scheduled Ninja post with copywriting was found."):
+                print(str(exc))
                 return 0
             raise
         record_id = record.get("record_id")
@@ -345,6 +430,8 @@ def main() -> int:
             raise CheckError("Selected Ninja record has no record ID.")
         if len(text) > MAX_POST_CHARS:
             raise CheckError("Copywriting exceeds Threads' 500-character post limit.")
+        if len(first_comment) > MAX_POST_CHARS:
+            raise CheckError("First/Second Comment exceeds Threads' 500-character reply limit.")
 
         account = threads_json(
             "GET", f"{THREADS_ROOT}/me?fields=id,username",
@@ -367,20 +454,25 @@ def main() -> int:
         if graphic and not all((cloud_name, cloud_api_key, cloud_api_secret)):
             raise CheckError("Cloudinary credentials are required for the selected image.")
         post_id = publish_one(
-            record=record, text=text, graphic=graphic, threads_token=threads_token,
+            record=record, text=text, first_comment=first_comment, graphic=graphic,
+            threads_token=threads_token,
             lark_token=lark_token, base_token=base_token, table_id=table_id,
             cloud_name=cloud_name, cloud_api_key=cloud_api_key,
             cloud_api_secret=cloud_api_secret, now=now,
         )
-        print(f"Published one Ninja Threads post (post ID {post_id}) and set its Lark status to Posted.")
+        comment_result = " with its first comment" if first_comment else ""
+        print(
+            f"Published one Ninja Threads post (post ID {post_id}){comment_result} "
+            "and set its Lark status to Posted."
+        )
         return 0
     except CheckError as exc:
         print(f"Ninja Threads workflow stopped safely: {safe_api_message(exc)}", file=sys.stderr)
         return 1
     except subprocess.CalledProcessError:
         print(
-            "Ninja Threads workflow stopped safely: could not save the duplicate-prevention state; "
-            "no publish was started.",
+            "Ninja Threads workflow stopped safely: could not save duplicate-prevention state; "
+            "check Threads and Lark before retrying to prevent duplicates.",
             file=sys.stderr,
         )
         return 1
