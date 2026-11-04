@@ -1,7 +1,8 @@
 {
   "reczz28TUsLC8nzN": {
+    "published_at": "2026-11-04T10:39:52.645752+08:00",
     "reserved_at": "2026-11-04T10:39:32.847557+08:00",
-    "scheduled_for": "2026-11-04",
-    "state": "reserved"
+    "state": "root_published",
+    "threads_post_id": "18079288544412651"
   }
 }
