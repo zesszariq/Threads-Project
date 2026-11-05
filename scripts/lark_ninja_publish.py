@@ -453,6 +453,10 @@ def main() -> int:
         record_id = record.get("record_id")
         if not isinstance(record_id, str):
             raise CheckError(f"Selected {BRAND_NAME} record has no record ID.")
+        # Only Ninja uses this field for a public follow-up reply. For A4U and
+        # Pirate it is reference/editorial material and must never be published.
+        if BRAND_NAME != "Ninja":
+            first_comment = ""
         reject_internal_notes(text, field_name="Copywriting", record_id=record_id)
         reject_internal_notes(first_comment, field_name="First/Second Comment", record_id=record_id)
         if len(text) > MAX_POST_CHARS:
