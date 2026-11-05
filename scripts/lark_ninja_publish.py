@@ -40,6 +40,21 @@ if BRAND_SLUG is None:
     raise ValueError("PUBLISH_BRAND must be Ninja, A4U, or Pirate.")
 STATE_PATH = Path("state") / f"{BRAND_SLUG}-published.json"
 MAX_POST_CHARS = 500
+INTERNAL_CONTENT_MARKERS = (
+    "internal reference only:",
+    "note: do not post this reference text publicly",
+    "source visual:",
+    "threads angle:",
+)
+
+
+def reject_internal_notes(text: str, *, field_name: str, record_id: str) -> None:
+    normalized = text.casefold()
+    if any(marker in normalized for marker in INTERNAL_CONTENT_MARKERS):
+        raise CheckError(
+            f"Selected {BRAND_NAME} record {record_id} has internal editorial notes "
+            f"in {field_name}; refusing to publish."
+        )
 
 
 def threads_json(method: str, url: str, *, token: str, params: dict[str, str] | None = None,
@@ -328,7 +343,11 @@ def publish_one(*, record: dict, text: str, first_comment: str, graphic: dict | 
     except CheckError as exc:
         # A definite 400/code 24 rejection means Meta did not publish this container.
         # Release the reservation so the next scheduled slot can create a fresh container.
-        if "publish Threads post failed (HTTP 400, Threads code 24" in str(exc):
+        error_text = str(exc)
+        if (
+            "publish Threads post failed (HTTP 400; Threads code 24;" in error_text
+            or "publish Threads post failed (HTTP 400, Threads code 24" in error_text
+        ):
             state = read_state()
             state.pop(record_id, None)
             save_state(state, f"Release rejected {BRAND_NAME} Threads record {record_id}")
@@ -434,6 +453,8 @@ def main() -> int:
         record_id = record.get("record_id")
         if not isinstance(record_id, str):
             raise CheckError(f"Selected {BRAND_NAME} record has no record ID.")
+        reject_internal_notes(text, field_name="Copywriting", record_id=record_id)
+        reject_internal_notes(first_comment, field_name="First/Second Comment", record_id=record_id)
         if len(text) > MAX_POST_CHARS:
             raise CheckError("Copywriting exceeds Threads' 500-character post limit.")
         if len(first_comment) > MAX_POST_CHARS:
