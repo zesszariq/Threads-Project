@@ -10,5 +10,10 @@
     "reserved_at": "2026-11-04T10:39:32.847557+08:00",
     "state": "published",
     "threads_post_id": "18079288544412651"
+  },
+  "reczz28TUsLC8orD": {
+    "reserved_at": "2026-11-09T10:44:34.562253+08:00",
+    "scheduled_for": "2026-11-09",
+    "state": "reserved"
   }
 }
