@@ -68,9 +68,10 @@
     "threads_post_id": "17907403500657116"
   },
   "reczz28TUvbLlf7G": {
+    "first_comment_container_id": "17997923049110850",
     "published_at": "2026-11-11T10:39:53.163346+08:00",
     "reserved_at": "2026-11-11T10:39:30.709613+08:00",
-    "state": "root_published",
+    "state": "first_comment_pending",
     "threads_post_id": "17896285302616100"
   }
 }
