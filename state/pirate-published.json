@@ -40,8 +40,9 @@
     "threads_post_id": "18015146648760808"
   },
   "reczz28Tb6HgFBzc": {
+    "published_at": "2026-11-12T10:43:34.460623+08:00",
     "reserved_at": "2026-11-12T10:42:40.592645+08:00",
-    "scheduled_for": "2026-11-12",
-    "state": "reserved"
+    "state": "root_published",
+    "threads_post_id": "18154112626557882"
   }
 }
