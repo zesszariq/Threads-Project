@@ -93,9 +93,10 @@
   },
   "reczz28ZCJ3WSTGK": {
     "first_comment_container_id": "17998759209110850",
+    "first_comment_id": "18147511447609377",
     "published_at": "2026-11-16T10:46:05.570292+08:00",
     "reserved_at": "2026-11-16T10:45:43.923531+08:00",
-    "state": "first_comment_pending",
+    "state": "first_comment_published",
     "threads_post_id": "17903754510673788"
   }
 }
