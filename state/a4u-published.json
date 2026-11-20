@@ -64,5 +64,10 @@
     "reserved_at": "2026-11-19T10:43:53.056031+08:00",
     "state": "published",
     "threads_post_id": "17866677267692038"
+  },
+  "reczz28ZCHA1cOyf": {
+    "reserved_at": "2026-11-20T10:44:19.366702+08:00",
+    "scheduled_for": "2026-11-20",
+    "state": "reserved"
   }
 }
