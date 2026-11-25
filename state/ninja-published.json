@@ -124,9 +124,10 @@
     "threads_post_id": "17945528766370962"
   },
   "reczz28ZCJ3WTvLc": {
+    "published_at": "2026-11-25T18:48:54.231058+08:00",
     "reserved_at": "2026-11-25T18:48:31.937323+08:00",
-    "scheduled_for": "2026-11-25",
-    "state": "reserved"
+    "state": "root_published",
+    "threads_post_id": "18021536831986274"
   },
   "reczz28ZCJ3WUHAn": {
     "first_comment_container_id": "17999654499110850",
